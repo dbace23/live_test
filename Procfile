@@ -1,1 +1,1 @@
-web: shipmentapp
+web: main.go
