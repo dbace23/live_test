@@ -1,1 +1,1 @@
-web: bin/shipmentapp
+web: livecode
