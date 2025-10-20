@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	_  "github.com/lib/pq"
 	"github.com/julienschmidt/httprouter"
@@ -22,7 +23,7 @@ type Shipment struct{
 	Nama string `json:"nama"`
 	Pengirim string `json:"pengirim"`
 	NamaPenerima string `json:"namaPenerima"`
-	AlamatPenerima string `json:"alatPenerima"`
+	AlamatPenerima string `json:"alamatPenerima"`
 	NamaItem string `json:"namaItem"`
 	BeratItem int `json:"beratItem"`
 	TimeStamp time.Time `json:"datetime"`
@@ -31,15 +32,14 @@ type Shipment struct{
 
 // repo: fallback
 var (
-	shipment=[] Shipment{
+	shipments=[] Shipment{
 		{ID:1,Nama:"Halim",Pengirim:"Judy",NamaPenerima:"Jasonn",AlamatPenerima:"Jalan agust 11,jakarta",NamaItem:"baju",BeratItem:90,TimeStamp: time.Now(), CreatedAt: time.Now()}
 	}
 	nextID=2
-	storeMux Sync.RWMutex
+	storeMux sync.RWMutex
 
 )
 // db handler
-
 var db *sql.DB
 
 //-- DB QUERIES
@@ -72,8 +72,18 @@ func dbGetShipment(id int) (*Shipment, error) {
 	}
 	return &s, nil
 }
+func dbCreateShipment(s *Shipment) error {
+	// If client omits TimeStamp, use NOW() in SQL
+	return db.QueryRow(
+		`INSERT INTO shipments
+		 (nama, pengirim, nama_penerima, alamat_penerima, nama_item, berat_item, "timestamp")
+		 VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, NOW()))
+		 RETURNING id, created_at, "timestamp"`,
+		s.Nama, s.Pengirim, s.NamaPenerima, s.AlamatPenerima, s.NamaItem, s.BeratItem, s.TimeStamp,
+	).Scan(&s.ID, &s.CreatedAt, &s.TimeStamp)
+}
 //todo list queries
-			//create shipment
+		 
 			//update shipment
 			// delete shipment
 
@@ -97,21 +107,31 @@ func parseID(param string) (int, error) {
 	return id, nil
 }
 
-func validateItem(it *Product) error {
-	if strings.TrimSpace(it.Name) == "" {
-		return errors.New("name is required")
+func validateShipment(s *Shipment) error {
+	if strings.TrimSpace(s.Nama) == "" {
+		return errors.New("nama is required")
 	}
-	if strings.TrimSpace(it.Description) == "" {
-		return errors.New("description is required")
+	if strings.TrimSpace(s.Pengirim) == "" {
+		return errors.New("pengirim is required")
 	}
-	if it.Price < 0 {
-		return errors.New("price cannot be negative")
+	if strings.TrimSpace(s.NamaPenerima) == "" {
+		return errors.New("namaPenerima is required")
+	}
+	if strings.TrimSpace(s.AlamatPenerima) == "" {
+		return errors.New("alamatPenerima is required")
+	}
+	if strings.TrimSpace(s.NamaItem) == "" {
+		return errors.New("namaItem is required")
+	}
+	if s.BeratItem < 0 {
+		return errors.New("beratItem cannot be negative")
 	}
 	return nil
 }
 
+
 func findIndexByID(id int) int {
-	for i, v := range products {
+	for i, v := range shipments {
 		if v.ID == id {
 			return i
 		}
@@ -143,7 +163,7 @@ func getShipment(w http.ResponseWriter, r* http.Request, ps httprouter.Params){
 	}
 	if db!=nil{
 		p,err:=dbGetShipment(id)
-		if err:=nil{
+		if err!=nil{
 			writeError(w,http.StatusInternalServerError,err.Error())
 			return
 		}
@@ -157,11 +177,122 @@ func getShipment(w http.ResponseWriter, r* http.Request, ps httprouter.Params){
 	storeMux.RLock()
 	defer storeMux.RUnlock()
 	if idx:=findIndexByID(id);idx==-1{
-		writeError(w,http.StatusNotFound,"product not found")
+		writeError(w,http.StatusNotFound,"shipment not found")
 		return
 	}
 	writeJSON(w,http.StatusOK,shipment[idx])
 }
+
+func createShipment(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	var in Shipment
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if err := validateShipment(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if db != nil {
+		if err := dbCreateShipment(&in); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, in)
+		return
+	}
+
+	storeMux.Lock()
+	defer storeMux.Unlock()
+	in.ID = nextID
+	nextID++
+	if in.TimeStamp.IsZero() {
+		in.TimeStamp = time.Now()
+	}
+	in.CreatedAt = time.Now()
+	shipments = append(shipments, in)
+	writeJSON(w, http.StatusCreated, in)
+}
+
+func updateShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	id, err := parseID(ps.ByName("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var in Shipment
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if err := validateItem(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if db != nil {
+		p, err := dbUpdateShipment(id, in)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if p == nil {
+			writeError(w, http.StatusNotFound, "shipment not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+		return
+	}
+	storeMux.Lock()
+	defer storeMux.Unlock()
+	idx := findIndexByID(id)
+	if idx == -1 {
+		writeError(w, http.StatusNotFound, "shipment not found")
+		return
+	}
+	in.ID = id
+	shipment[idx] = in
+	writeJSON(w, http.StatusOK, in)
+}
+
+func deleteShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	id, err := parseID(ps.ByName("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if db != nil {
+		ok, err := dbDeleteShipment(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "shipment not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deleted_id": id})
+		return
+	}
+	storeMux.Lock()
+	defer storeMux.Unlock()
+	idx := findIndexByID(id)
+	if idx == -1 {
+		writeError(w, http.StatusNotFound, "shipment not found")
+		return
+	}
+	shipment = append(shipment[:idx], shipment[idx+1:]...)
+	writeJSON(w, http.StatusOK, map[string]any{"deleted_id": id})
+}
+
+
+
+
+
 
 func main (){
 	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
@@ -177,7 +308,7 @@ func main (){
 
 	router.GET("/shipment",listShipments)
 	router.GET("/shipment/:id",getShipment)
-	// router.POST("/shipments",createShipment)
+	router.POST("/shipments",createShipment)
 	// router.PUT("/shipment/:id",updateShipment)
 	// router.DELETE("/shipment/:id",deleteShipment)
 
