@@ -207,7 +207,7 @@ func getShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 			return
 		}
 		if p == nil {
-			writeError(w, http.StatusNotFound, err.Error())
+			writeError(w, http.StatusNotFound, "shipment not found")
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
@@ -355,8 +355,8 @@ func main() {
 	router.GET("/shipment", listShipments)
 	router.GET("/shipment/:id", getShipment)
 	router.POST("/shipments", createShipment)
-	// router.PUT("/shipment/:id",updateShipment)
-	// router.DELETE("/shipment/:id",deleteShipment)
+	router.PUT("/shipment/:id", updateShipment)
+	router.DELETE("/shipment/:id", deleteShipment)
 
 	port := os.Getenv("PORT")
 	if port == "" {
