@@ -1,1 +1,1 @@
-web: live
+web: livecode
