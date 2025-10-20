@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -13,57 +12,63 @@ import (
 	"sync"
 	"time"
 
-	_  "github.com/lib/pq"
 	"github.com/julienschmidt/httprouter"
+	_ "github.com/lib/pq"
 )
 
-//models
-type Shipment struct{
-	ID int `json:"id"`
-	Nama string `json:"nama"`
-	Pengirim string `json:"pengirim"`
-	NamaPenerima string `json:"namaPenerima"`
-	AlamatPenerima string `json:"alamatPenerima"`
-	NamaItem string `json:"namaItem"`
-	BeratItem int `json:"beratItem"`
-	TimeStamp time.Time `json:"datetime"`
-	CreatedAt time.Time `json:"createdAt"`
+// models
+type Shipment struct {
+	ID             int       `json:"id"`
+	Nama           string    `json:"nama"`
+	Pengirim       string    `json:"pengirim"`
+	NamaPenerima   string    `json:"namaPenerima"`
+	AlamatPenerima string    `json:"alamatPenerima"`
+	NamaItem       string    `json:"namaItem"`
+	BeratItem      int       `json:"beratItem"`
+	TimeStamp      time.Time `json:"datetime"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // repo: fallback
 var (
-	shipments=[] Shipment{
-		{ID:1,Nama:"Halim",Pengirim:"Judy",NamaPenerima:"Jasonn",AlamatPenerima:"Jalan agust 11,jakarta",NamaItem:"baju",BeratItem:90,TimeStamp: time.Now(), CreatedAt: time.Now()}
+	shipments = []Shipment{
+		{ID: 1,
+			Nama:           "Halim",
+			Pengirim:       "Judy",
+			NamaPenerima:   "Jasonn",
+			AlamatPenerima: "Jalan agust 11,jakarta", NamaItem: "baju", BeratItem: 90,
+			TimeStamp: time.Now(),
+			CreatedAt: time.Now()},
 	}
-	nextID=2
+	nextID   = 2
 	storeMux sync.RWMutex
-
 )
+
 // db handler
 var db *sql.DB
 
-//-- DB QUERIES
-func dbListShipment() ([]Shipment,error){
-	rows,err:= db.Query(`SELECT ID,Nama,Pengirim,NamaPenerima,AlamatPenerima,NamaItem,BeratItem,Timestamp,CreatedAt from shipments order by id`)
+// -- DB QUERIES
+func dbListShipment() ([]Shipment, error) {
+	rows, err := db.Query(`SELECT ID,Nama,Pengirim,NamaPenerima,AlamatPenerima,NamaItem,BeratItem,Timestamp,CreatedAt from shipments order by id`)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 	defer rows.Close()
 	var out []Shipment
-	for rows.Next(){
+	for rows.Next() {
 		var s Shipment
-		if err:= rows.Scan(&s.ID,&s.Nama,&s.Pengirim,&s.NamaPenerima,&s.AlamatPenerima,&s.NamaItem,&s.BeratItem,&s.Timestamp,&s.CreatedAt); err != nil{
-			return nil,err
+		if err := rows.Scan(&s.ID, &s.Nama, &s.Pengirim, &s.NamaPenerima, &s.AlamatPenerima, &s.NamaItem, &s.BeratItem, &s.TimeStamp, &s.CreatedAt); err != nil {
+			return nil, err
 		}
-		out.append(out,s)
+		out = append(out, s)
 	}
-	return out,rows.Err()
+	return out, rows.Err()
 }
 
 func dbGetShipment(id int) (*Shipment, error) {
 	var s Shipment
 	err := db.QueryRow(`SELECT ID,Nama,Pengirim,NamaPenerima,AlamatPenerima,NamaItem,BeratItem,Timestamp,CreatedAt from shipments WHERE id=$1`, id).
-		Scan(&s.ID,&s.Nama,&s.Pengirim,&s.NamaPenerima,&s.AlamatPenerima,&s.NamaItem,&s.BeratItem,&s.Timestamp,&s.CreatedAt)
+		Scan(&s.ID, &s.Nama, &s.Pengirim, &s.NamaPenerima, &s.AlamatPenerima, &s.NamaItem, &s.BeratItem, &s.TimeStamp, &s.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -82,21 +87,55 @@ func dbCreateShipment(s *Shipment) error {
 		s.Nama, s.Pengirim, s.NamaPenerima, s.AlamatPenerima, s.NamaItem, s.BeratItem, s.TimeStamp,
 	).Scan(&s.ID, &s.CreatedAt, &s.TimeStamp)
 }
-//todo list queries
-		 
-			//update shipment
-			// delete shipment
 
-//helpers
-func writeJSON(w http.ResponseWriter,code int, data any){
-	w.Header().Set("Content-Type","application/json")
+func dbUpdateShipment(id int, s *Shipment) (*Shipment, error) {
+	_, err := db.Exec(`
+		UPDATE shipments SET
+			nama = $1,
+			pengirim = $2,
+			nama_penerima = $3,
+			alamat_penerima = $4,
+			nama_item = $5,
+			berat_item = $6,
+			"timestamp" = COALESCE($7, "timestamp")
+		WHERE id = $8
+	`, s.Nama, s.Pengirim, s.NamaPenerima, s.AlamatPenerima, s.NamaItem, s.BeratItem,
+		func() *time.Time {
+			if s.TimeStamp.IsZero() {
+				return nil
+			}
+			return &s.TimeStamp
+		}(),
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return dbGetShipment(id)
+}
+func dbDeleteShipment(id int) (bool, error) {
+	res, err := db.Exec(`DELETE FROM shipments WHERE id = $1`, id)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+// helpers
+func writeJSON(w http.ResponseWriter, code int, data any) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	if err:= json.NewEncoder(w).Encode(data);err !=nil{
-		log.Printf("writeJson encode error: %v",err)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("writeJson encode error: %v", err)
 	}
 }
-func writeError(w http.ResponseWriter,code int, msg string){
-	writeJSON(w,code,map[string]string{"error":msg})
+func writeError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
 
 }
 func parseID(param string) (int, error) {
@@ -129,7 +168,6 @@ func validateShipment(s *Shipment) error {
 	return nil
 }
 
-
 func findIndexByID(id int) int {
 	for i, v := range shipments {
 		if v.ID == id {
@@ -138,49 +176,52 @@ func findIndexByID(id int) int {
 	}
 	return -1
 }
-//http handlers 
-func listShipments(w http.ResponseWriter, r *http.Request, _ httprouter.Params){
-	if db!=nil{
-		items,err:=dbListShipment()
-		if err!=nil{
+
+// http handlers
+func listShipments(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	if db != nil {
+		items, err := dbListShipment()
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w,http.StatusOK,items)
+		writeJSON(w, http.StatusOK, items)
 		return
 	}
 	storeMux.RLock()
 	defer storeMux.RUnlock()
-	writeJSON(w, http.StatusOK,shipment)
+	writeJSON(w, http.StatusOK, shipments)
 
 }
 
-func getShipment(w http.ResponseWriter, r* http.Request, ps httprouter.Params){
-	id,err:=parseID(ps.ByName("id"))
+func getShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	id, err := parseID(ps.ByName("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest,er.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if db!=nil{
-		p,err:=dbGetShipment(id)
-		if err!=nil{
-			writeError(w,http.StatusInternalServerError,err.Error())
+	if db != nil {
+		p, err := dbGetShipment(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if p==nil{
-			writeError(w,http.StatusNotFound,err.Error())
+		if p == nil {
+			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeJSON(w,http.StatusOK,p)
+		writeJSON(w, http.StatusOK, p)
 		return
 	}
 	storeMux.RLock()
 	defer storeMux.RUnlock()
-	if idx:=findIndexByID(id);idx==-1{
-		writeError(w,http.StatusNotFound,"shipment not found")
+
+	idx := findIndexByID(id)
+	if idx := findIndexByID(id); idx == -1 {
+		writeError(w, http.StatusNotFound, "shipment not found")
 		return
 	}
-	writeJSON(w,http.StatusOK,shipment[idx])
+	writeJSON(w, http.StatusOK, shipments[idx])
 }
 
 func createShipment(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -230,12 +271,12 @@ func updateShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params
 		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	if err := validateItem(&in); err != nil {
+	if err := validateShipment(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if db != nil {
-		p, err := dbUpdateShipment(id, in)
+		p, err := dbUpdateShipment(id, &in)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -255,7 +296,7 @@ func updateShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params
 		return
 	}
 	in.ID = id
-	shipment[idx] = in
+	shipments[idx] = in
 	writeJSON(w, http.StatusOK, in)
 }
 
@@ -285,19 +326,24 @@ func deleteShipment(w http.ResponseWriter, r *http.Request, ps httprouter.Params
 		writeError(w, http.StatusNotFound, "shipment not found")
 		return
 	}
-	shipment = append(shipment[:idx], shipment[idx+1:]...)
+	shipments = append(shipments[:idx], shipments[idx+1:]...)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted_id": id})
 }
 
-
-
-
-
-
-func main (){
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
-	if err != nil {
-		log.Fatal(err)
+func main() {
+	var err error
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn != "" {
+		db, err = sql.Open("postgres", dsn)
+		if err != nil {
+			log.Fatalf("open db: %v", err)
+		}
+		if err := db.Ping(); err != nil {
+			log.Fatalf("ping db: %v", err)
+		}
+		log.Println("DB connected")
+	} else {
+		log.Println("DATABASE_URL not set; using in-memory fallback")
 	}
 
 	router := httprouter.New()
@@ -306,9 +352,9 @@ func main (){
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	router.GET("/shipment",listShipments)
-	router.GET("/shipment/:id",getShipment)
-	router.POST("/shipments",createShipment)
+	router.GET("/shipment", listShipments)
+	router.GET("/shipment/:id", getShipment)
+	router.POST("/shipments", createShipment)
 	// router.PUT("/shipment/:id",updateShipment)
 	// router.DELETE("/shipment/:id",deleteShipment)
 
@@ -320,4 +366,3 @@ func main (){
 	log.Printf("shipment server on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, router))
 }
-
